@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Taby Face — Avatar</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 100%;
+    background: #e9e9ea;
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 26px; -webkit-user-select: none; user-select: none;
+  }
+  .avatar {
+    width: min(70vw, 340px);
+    aspect-ratio: 1;
+    background: radial-gradient(120% 120% at 50% 18%, #16161a 0%, #0a0a0c 70%);
+    border-radius: 50%;
+    position: relative; overflow: hidden;
+    box-shadow: 0 26px 70px rgba(0,0,0,.34), inset 0 0 0 1px rgba(255,255,255,.06),
+                inset 0 14px 36px rgba(255,255,255,.05);
+  }
+  svg { position:absolute; inset:0; width:100%; height:100%; display:block; }
+  .label {
+    color: rgba(90,90,95,.9); font-size:12px; letter-spacing:.16em; text-transform:uppercase;
+  }
+  .controls { display:flex; gap:8px; flex-wrap:wrap; justify-content:center; max-width:560px; }
+  .controls button {
+    border:1px solid #d4d4d4; background:#fff; color:#222; padding:8px 14px;
+    border-radius:999px; font-size:14px; cursor:pointer; transition:all .15s ease;
+  }
+  .controls button:hover { background:#111; color:#fff; border-color:#111; }
+  .controls button.on { background:#111; color:#fff; border-color:#111; }
+</style>
+</head>
+<body>
+
+  <div class="avatar">
+    <svg viewBox="0 0 300 300" id="svg">
+      <g id="root">
+        <g id="hands" opacity="0">
+          <line id="belt" x1="100" y1="232" x2="200" y2="232" stroke="#f5f5f6" stroke-width="5" stroke-linecap="round" opacity="0.5"/>
+          <rect id="pawL" x="118" y="210" width="26" height="18" rx="9" fill="#f5f5f6"/>
+          <rect id="pawR" x="156" y="210" width="26" height="18" rx="9" fill="#f5f5f6"/>
+        </g>
+        <g id="eyes">
+          <rect id="eyeL" x="0" y="0" width="44" height="80" rx="20" ry="20" fill="#f5f5f6"/>
+          <rect id="eyeR" x="0" y="0" width="44" height="80" rx="20" ry="20" fill="#f5f5f6"/>
+        </g>
+        <g id="catEyes" opacity="0" fill="none" stroke="#f5f5f6" stroke-width="9" stroke-linecap="round">
+          <path id="catL" d=""/>
+          <path id="catR" d=""/>
+        </g>
+        <path id="mouth" d="" fill="none" stroke="#f5f5f6" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+        <g id="dots" opacity="0">
+          <circle cx="134" cy="206" r="5.5" fill="#f5f5f6"/>
+          <circle cx="150" cy="206" r="5.5" fill="#f5f5f6"/>
+          <circle cx="166" cy="206" r="5.5" fill="#f5f5f6"/>
+        </g>
+      </g>
+    </svg>
+  </div>
+
+  <div class="label" id="label">auto</div>
+
+  <div class="controls" id="controls">
+    <button data-state="auto" class="on">Auto-Loop</button>
+    <button data-state="idle">Idle</button>
+    <button data-state="thinking">Überlegen</button>
+    <button data-state="waiting">Warten</button>
+    <button data-state="typing">Tippen</button>
+    <button data-state="listening">Zuhören</button>
+    <button data-state="processing">Laden</button>
+    <button data-state="happy">Happy</button>
+    <button data-state="cat">Katze</button>
+    <button data-state="wink">Zwinkern</button>
+    <button data-state="love">Verliebt</button>
+    <button data-state="sad">Traurig</button>
+    <button data-state="surprised">Überrascht</button>
+    <button data-state="sleeping">Schlafen</button>
+  </div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---- layout for a round avatar (face centered, mouth wide & tucked under eyes) ----
+  const CX = 150, EYE_GAP = 60, EYE_Y = 132, MOUTH_Y = 162;
+
+  function Spring(v,k,d){ return { v, target:v, vel:0, k, d }; }
+  function step(s,dt){ const a=-s.k*(s.v-s.target)-s.d*s.vel; s.vel+=a*dt; s.v+=s.vel*dt; return s.v; }
+
+  const S = {
+    hL:Spring(80,220,26), hR:Spring(80,220,26),
+    wL:Spring(44,220,26), wR:Spring(44,220,26),
+    yL:Spring(0,200,24),  yR:Spring(0,200,24),
+    rL:Spring(0,180,22),  rR:Spring(0,180,22),
+    lookX:Spring(0,90,16),lookY:Spring(0,90,16),
+    mCurve:Spring(16,170,22), mW:Spring(96,170,22), mOp:Spring(1,200,24),
+    tilt:Spring(0,120,18), blink:Spring(1,900,42),
+    dots:Spring(0,200,26), hue:Spring(0,120,20),
+    cat:Spring(0,260,30), hands:Spring(0,200,26),
+    gap:Spring(60,200,24),
+  };
+
+  // defaults
+  const D = { hL:80,hR:80, wL:44,wR:44, yL:0,yR:0, rL:0,rR:0,
+              mCurve:18, mW:58, mOp:1, dots:0, hue:0, cat:0, hands:0,
+              lookX:0, lookY:0, gap:60, mouth:"arc" };
+
+  const POSES = {
+    idle:       {},
+    thinking:   { hL:62,hR:26, mCurve:0,  mW:44, mOp:0, dots:1, lookX:20, lookY:-18 },
+    waiting:    { hL:28,hR:28, wL:46,wR:46, mCurve:10, mW:50, mOp:.55 },
+    typing:     { hL:52,hR:52, wL:42,wR:42, mCurve:4, mW:42, mOp:.65, lookY:14, hands:1 },
+    listening:  { hL:88,hR:70, mCurve:14, mW:60, mOp:1, gap:64 },
+    processing: { hL:54,hR:54, wL:42,wR:42, mCurve:2, mW:40, mOp:.5 },
+    happy:      { hL:46,hR:46, wL:48,wR:48, mCurve:32, mW:78, mOp:1, yL:-4,yR:-4, gap:66 },
+    cat:        { hL:46,hR:46, mOp:1, mCurve:0, mW:50, cat:1, mouth:"cat", yL:-2,yR:-2 },
+    wink:       { hL:10,hR:76, mCurve:24, mW:62, mOp:1, yL:8 },
+    love:       { hL:64,hR:64, wL:56,wR:56, mCurve:26, mW:64, mOp:1, hue:1, gap:72 },
+    sad:        { hL:48,hR:48, wL:42,wR:42, mCurve:-16, mW:54, mOp:.9, rL:10,rR:-10, yL:10,yR:10 },
+    surprised:  { hL:96,hR:96, wL:58,wR:58, mCurve:0, mW:38, mOp:1, gap:70 },
+    sleeping:   { hL:9,hR:9, mCurve:6, mW:40, mOp:.4 },
+  };
+
+  const BUSY = new Set(["thinking","typing","processing","sleeping"]);
+  let current="idle", curMouth="arc", t=0, blinkAt=1.5, lookAt=1.0,
+      autoSeq=null, autoIdx=0, autoAt=0;
+
+  function applyPose(name){
+    const p = POSES[name] || {};
+    for (const key of ["hL","hR","wL","wR","yL","yR","rL","rR","mCurve","mW","mOp","dots","hue","cat","hands","lookX","lookY","gap"])
+      S[key].target = (p[key] !== undefined ? p[key] : D[key]);
+    curMouth = p.mouth || "arc"; current = name;
+    document.getElementById("label").textContent = autoSeq ? "auto" : name;
+  }
+  function set(state){ if (state==="auto") return startAuto(); autoSeq=null; applyPose(state); }
+  function startAuto(){
+    autoSeq=["idle","thinking","waiting","typing","listening","processing","happy","cat","wink","love","surprised","idle","sad"];
+    autoIdx=0; autoAt=t+2.6; applyPose(autoSeq[0]);
+    document.getElementById("label").textContent="auto";
+  }
+
+  const $=(id)=>document.getElementById(id);
+  const eyeL=$("eyeL"),eyeR=$("eyeR"),eyesG=$("eyes"),catG=$("catEyes"),catL=$("catL"),catR=$("catR"),
+        rootG=$("root"),mouth=$("mouth"),dotsG=$("dots"),handsG=$("hands"),pawL=$("pawL"),pawR=$("pawR");
+  const mix=(a,b,k)=>a+(b-a)*k;
+
+  // clean, evenly-curved smile via a circular arc (s>0 smile, s<0 frown)
+  function smilePath(cx,my,w,s){
+    const x0=cx-w/2, x1=cx+w/2;
+    if(Math.abs(s)<0.8) return `M ${x0.toFixed(1)} ${my.toFixed(1)} L ${x1.toFixed(1)} ${my.toFixed(1)}`;
+    const r=Math.abs(s)/2 + (w*w)/(8*Math.abs(s));
+    const sweep=s>0?0:1;
+    return `M ${x0.toFixed(1)} ${my.toFixed(1)} A ${r.toFixed(1)} ${r.toFixed(1)} 0 0 ${sweep} ${x1.toFixed(1)} ${my.toFixed(1)}`;
+  }
+
+  let last=performance.now();
+  function frame(now){
+    let dt=(now-last)/1000; last=now; if(dt>0.05)dt=0.05; t+=dt;
+
+    if(!BUSY.has(current)){
+      if(t>blinkAt){ S.blink.target=0; setTimeout(()=>S.blink.target=1,90); blinkAt=t+2.0+Math.random()*3.0; }
+      if(t>lookAt){
+        if(["idle","listening","cat"].includes(current)){
+          S.lookX.target=(Math.random()*2-1)*11; S.lookY.target=(Math.random()*2-1)*6;
+        }
+        lookAt=t+1.4+Math.random()*2.2;
+      }
+    } else S.blink.target=1;
+
+    if(autoSeq && t>autoAt){ autoIdx=(autoIdx+1)%autoSeq.length; applyPose(autoSeq[autoIdx]); autoAt=t+2.6; }
+
+    for(const k in S) step(S[k],dt);
+
+    let exL=0,exR=0,exLookY=0,exLookX=0,exTilt=0;
+    let breathe=Math.sin(t*1.6)*1.2;
+    if(current==="typing"){ const b=Math.sin(t*13)*2; exL=b; exR=-b; }
+    if(current==="processing") exLookY=Math.sin(t*5)*8;
+    if(current==="waiting"){ exLookX=Math.sin(t*1.4)*8; exTilt=Math.sin(t*1.4)*2; }
+    if(current==="thinking") exLookY=Math.sin(t*2.2)*2;
+    if(current==="listening") breathe=Math.sin(t*3)*2.2;
+    if(current==="sleeping") exTilt=6+Math.sin(t)*1.2;
+    if(current==="cat") exTilt=Math.sin(t*1.2)*3;
+
+    const blinkK=S.blink.v, squash=1+(1-blinkK)*0.16;
+    const lookX=S.lookX.v+exLookX, lookY=S.lookY.v+exLookY, catK=S.cat.v;
+    const col=S.hue.v<0.02?"#f5f5f6":
+      `rgb(${Math.round(mix(245,255,S.hue.v))},${Math.round(mix(245,77,S.hue.v))},${Math.round(mix(246,109,S.hue.v))})`;
+
+    function placeEye(el,cx,hS,wS,yS,rS,ex){
+      const h=Math.max(7,hS.v*blinkK), w=wS.v*squash;
+      el.setAttribute("x",(cx-w/2+lookX).toFixed(2));
+      el.setAttribute("y",(EYE_Y-h/2+yS.v+lookY+breathe+ex).toFixed(2));
+      el.setAttribute("width",w.toFixed(2)); el.setAttribute("height",h.toFixed(2));
+      el.setAttribute("rx",(Math.min(w,h)*0.46).toFixed(2)); el.setAttribute("ry",(Math.min(w,h)*0.46).toFixed(2));
+      el.setAttribute("fill",col);
+      el.setAttribute("transform",`rotate(${rS.v} ${cx+lookX} ${EYE_Y+yS.v+lookY})`);
+    }
+    const gap=S.gap.v;
+    placeEye(eyeL,CX-gap,S.hL,S.wL,S.yL,S.rL,exL);
+    placeEye(eyeR,CX+gap,S.hR,S.wR,S.yR,S.rR,exR);
+    eyesG.setAttribute("opacity",(1-catK).toFixed(2));
+
+    catG.setAttribute("opacity",catK.toFixed(2));
+    if(catK>0.02){
+      const aw=30, ay=EYE_Y+lookY+breathe;
+      const arc=(cx)=>`M ${cx-aw/2+lookX} ${ay+8} Q ${cx+lookX} ${ay-14} ${cx+aw/2+lookX} ${ay+8}`;
+      catL.setAttribute("d",arc(CX-S.gap.v)); catR.setAttribute("d",arc(CX+S.gap.v));
+    }
+
+    const mw=S.mW.v, c=S.mCurve.v, my=MOUTH_Y+lookY*0.4+breathe;
+    if(curMouth==="cat"){
+      const w2=mw/2;
+      mouth.setAttribute("d",`M ${CX-w2} ${my} Q ${CX-w2/2} ${my+12} ${CX} ${my} Q ${CX+w2/2} ${my+12} ${CX+w2} ${my}`);
+    } else {
+      mouth.setAttribute("d", smilePath(CX, my, mw, c));
+    }
+    mouth.setAttribute("opacity",S.mOp.v.toFixed(2)); mouth.setAttribute("stroke",col);
+
+    dotsG.setAttribute("opacity",S.dots.v.toFixed(2));
+    if(S.dots.v>0.05){ const cs=dotsG.children;
+      for(let i=0;i<cs.length;i++){ const ph=(Math.sin(t*6-i*0.9)+1)/2;
+        cs[i].setAttribute("opacity",(0.25+ph*0.75).toFixed(2)); cs[i].setAttribute("cy",(206-ph*5).toFixed(1)); } }
+
+    handsG.setAttribute("opacity",S.hands.v.toFixed(2));
+    if(S.hands.v>0.02){
+      const tapL=Math.max(0,Math.sin(t*13))*11, tapR=Math.max(0,Math.sin(t*13+Math.PI))*11;
+      pawL.setAttribute("transform",`translate(0 ${-tapL.toFixed(2)})`);
+      pawR.setAttribute("transform",`translate(0 ${-tapR.toFixed(2)})`);
+    }
+
+    rootG.setAttribute("transform",`rotate(${(S.tilt.v+exTilt).toFixed(2)} ${CX} 150)`);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  document.getElementById("controls").addEventListener("click",(e)=>{
+    const b=e.target.closest("button"); if(!b) return;
+    document.querySelectorAll(".controls button").forEach(x=>x.classList.remove("on"));
+    b.classList.add("on"); set(b.dataset.state);
+  });
+  window.taby={ set, states:Object.keys(POSES).concat("auto") };
+  startAuto();
+})();
+</script>
+</body>
+</html>
